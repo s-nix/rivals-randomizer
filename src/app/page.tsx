@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { v4 as uuid } from "uuid";
 import ImageUploader from "@/components/ImageUploader";
+import ImageCropper, { CropRect } from "@/components/ImageCropper";
 import PlayerList from "@/components/PlayerList";
 import ConstraintPanel from "@/components/ConstraintPanel";
 import ResultsDisplay from "@/components/ResultsDisplay";
@@ -13,9 +14,14 @@ import {
   DEFAULT_OPTIONS,
   randomizeHeroes,
 } from "@/lib/randomizer";
-import { recognizeImage, OcrProgress } from "@/lib/ocr";
+import {
+  recognizeImage,
+  recognizeWithMultiPass,
+  OcrProgress,
+  OcrLine,
+} from "@/lib/ocr";
 
-type Stage = "upload" | "edit" | "results";
+type Stage = "upload" | "crop" | "edit" | "results";
 
 function createEmptyTeam(team: 1 | 2, count: number = 6): Player[] {
   return Array.from({ length: count }, () => ({
@@ -27,6 +33,8 @@ function createEmptyTeam(team: 1 | 2, count: number = 6): Player[] {
 
 export default function Home() {
   const [stage, setStage] = useState<Stage>("upload");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string>("");
   const [team1, setTeam1] = useState<Player[]>(createEmptyTeam(1));
   const [team2, setTeam2] = useState<Player[]>(createEmptyTeam(2));
   const [options, setOptions] = useState<RandomizerOptions>(DEFAULT_OPTIONS);
@@ -34,49 +42,73 @@ export default function Home() {
   const [ocrStatus, setOcrStatus] = useState<string>("");
   const [ocrProgress, setOcrProgress] = useState<number>(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [useMultiPass, setUseMultiPass] = useState(false);
+  const [preprocessedPreview, setPreprocessedPreview] = useState<string>("");
+  const [showDebug, setShowDebug] = useState(false);
 
-  // ── OCR handler ──
-  const handleImageSelected = useCallback(async (file: File) => {
-    setIsProcessing(true);
-    setOcrStatus("Initializing OCR...");
-    setOcrProgress(0);
-
-    try {
-      const ocrResult = await recognizeImage(file, (p: OcrProgress) => {
-        setOcrStatus(p.status);
-        setOcrProgress(Math.round(p.progress * 100));
-      });
-
-      // Try to split OCR lines into two teams (assume first half = team 1, second = team 2)
-      const names = ocrResult.lines.filter((l) => l.length > 1);
-      const mid = Math.ceil(names.length / 2);
-
-      const t1: Player[] = names.slice(0, mid).map((name) => ({
-        id: uuid(),
-        name,
-        team: 1 as const,
-      }));
-
-      const t2: Player[] = names.slice(mid).map((name) => ({
-        id: uuid(),
-        name,
-        team: 2 as const,
-      }));
-
-      // Pad to at least 1 entry each
-      if (t1.length === 0) t1.push({ id: uuid(), name: "", team: 1 });
-      if (t2.length === 0) t2.push({ id: uuid(), name: "", team: 2 });
-
-      setTeam1(t1);
-      setTeam2(t2);
-      setStage("edit");
-    } catch (err) {
-      console.error("OCR failed:", err);
-      setOcrStatus("OCR failed. Try manual entry instead.");
-    } finally {
-      setIsProcessing(false);
-    }
+  // ── Step 1: Image selected → go to crop stage ──
+  const handleImageSelected = useCallback((file: File) => {
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setStage("crop");
   }, []);
+
+  // ── Step 2: Crop confirmed → run OCR ──
+  const handleCropConfirm = useCallback(
+    async (cropRect: CropRect | null) => {
+      if (!imageFile) return;
+
+      setIsProcessing(true);
+      setOcrStatus("Preprocessing image...");
+      setOcrProgress(0);
+
+      try {
+        const ocrFn = useMultiPass ? recognizeWithMultiPass : recognizeImage;
+        const ocrResult = await ocrFn(
+          imageFile,
+          (p: OcrProgress) => {
+            setOcrStatus(p.status);
+            setOcrProgress(Math.round(p.progress * 100));
+          },
+          cropRect ?? undefined
+        );
+
+        setPreprocessedPreview(ocrResult.preprocessedPreview);
+
+        // Split lines into two teams
+        const names: OcrLine[] = ocrResult.lines.filter(
+          (l) => l.text.length > 1
+        );
+        const mid = Math.ceil(names.length / 2);
+
+        const t1: Player[] = names.slice(0, mid).map((line) => ({
+          id: uuid(),
+          name: line.text,
+          team: 1 as const,
+        }));
+
+        const t2: Player[] = names.slice(mid).map((line) => ({
+          id: uuid(),
+          name: line.text,
+          team: 2 as const,
+        }));
+
+        // Pad to at least 1 entry each
+        if (t1.length === 0) t1.push({ id: uuid(), name: "", team: 1 });
+        if (t2.length === 0) t2.push({ id: uuid(), name: "", team: 2 });
+
+        setTeam1(t1);
+        setTeam2(t2);
+        setStage("edit");
+      } catch (err) {
+        console.error("OCR failed:", err);
+        setOcrStatus("OCR failed. Try manual entry instead.");
+      } finally {
+        setIsProcessing(false);
+      }
+    },
+    [imageFile, useMultiPass]
+  );
 
   // ── Manual entry ──
   const handleManualEntry = useCallback(() => {
@@ -112,12 +144,15 @@ export default function Home() {
   // ── Start over ──
   const handleStartOver = useCallback(() => {
     setStage("upload");
+    setImageFile(null);
+    setImagePreview("");
     setTeam1(createEmptyTeam(1));
     setTeam2(createEmptyTeam(2));
     setOptions(DEFAULT_OPTIONS);
     setResult(null);
     setOcrStatus("");
     setOcrProgress(0);
+    setPreprocessedPreview("");
   }, []);
 
   const filledPlayerCount =
@@ -164,20 +199,8 @@ export default function Home() {
 
             <ImageUploader
               onImageSelected={handleImageSelected}
-              disabled={isProcessing}
+              disabled={false}
             />
-
-            {isProcessing && (
-              <div className="text-center space-y-2">
-                <div className="w-full bg-gray-800 rounded-full h-2">
-                  <div
-                    className="bg-purple-500 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${ocrProgress}%` }}
-                  />
-                </div>
-                <p className="text-sm text-gray-400">{ocrStatus}</p>
-              </div>
-            )}
 
             <div className="relative flex items-center justify-center">
               <div className="absolute inset-0 flex items-center">
@@ -198,6 +221,54 @@ export default function Home() {
           </div>
         )}
 
+        {/* ── Stage: Crop ── */}
+        {stage === "crop" && imagePreview && (
+          <div className="space-y-6">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold">Select Player Names</h2>
+              <p className="text-gray-400">
+                Draw a box around the area containing player names to improve
+                OCR accuracy. Or use the full image.
+              </p>
+            </div>
+
+            {!isProcessing ? (
+              <>
+                <ImageCropper
+                  imageSrc={imagePreview}
+                  onCropConfirm={handleCropConfirm}
+                />
+
+                {/* Multi-pass toggle */}
+                <div className="flex items-center justify-center gap-3">
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-400">
+                    <input
+                      type="checkbox"
+                      checked={useMultiPass}
+                      onChange={(e) => setUseMultiPass(e.target.checked)}
+                      className="rounded border-gray-600 bg-gray-800 text-purple-500
+                                 focus:ring-purple-500 focus:ring-offset-gray-950"
+                    />
+                    Multi-pass OCR (slower but more accurate)
+                  </label>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-4">
+                <div className="text-center space-y-2">
+                  <div className="w-full bg-gray-800 rounded-full h-2">
+                    <div
+                      className="bg-purple-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${ocrProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-sm text-gray-400">{ocrStatus}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Stage: Edit Players ── */}
         {stage === "edit" && (
           <div className="space-y-6">
@@ -208,6 +279,56 @@ export default function Home() {
                 players as needed.
               </p>
             </div>
+
+            {/* Debug: preprocessed image preview */}
+            {preprocessedPreview && (
+              <div className="space-y-2">
+                <button
+                  onClick={() => setShowDebug(!showDebug)}
+                  className="text-xs text-gray-500 hover:text-gray-300 transition-colors
+                             flex items-center gap-1 mx-auto"
+                >
+                  <svg
+                    className={`w-3 h-3 transition-transform ${showDebug ? "rotate-90" : ""}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                  {showDebug ? "Hide" : "Show"} preprocessed image
+                </button>
+                {showDebug && (
+                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-2">
+                      This is what Tesseract sees after preprocessing:
+                    </p>
+                    <img
+                      src={preprocessedPreview}
+                      alt="Preprocessed"
+                      className="max-h-[200px] mx-auto rounded border border-gray-700"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Re-scan button */}
+            {imageFile && (
+              <div className="flex justify-center">
+                <button
+                  onClick={() => setStage("crop")}
+                  className="text-sm text-purple-400 hover:text-purple-300 transition-colors
+                             flex items-center gap-1"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M20.015 4.356v4.993" />
+                  </svg>
+                  Re-scan with different selection
+                </button>
+              </div>
+            )}
 
             <div className="flex flex-col sm:flex-row gap-6">
               <PlayerList
