@@ -1,6 +1,16 @@
 /**
- * Canvas-based image preprocessing to improve OCR accuracy on game screenshots.
- * Converts busy, colorful game UI into clean black-on-white text.
+ * Canvas-based image preprocessing to improve OCR accuracy on Marvel Rivals
+ * lobby screenshots.
+ *
+ * The Marvel Rivals custom match lobby has:
+ *  - Light/white card backgrounds with dark text (~RGB 22,28,38)
+ *  - Player names in medium-weight font, dark on white
+ *  - Rank text below each name (GRANDMASTER, SILVER, etc.)
+ *  - Small icons/avatars beside each name
+ *  - Background is light blue/lavender (~RGB 190,200,230)
+ *
+ * Pipeline: upscale → grayscale → normalize → sharpen → optional threshold
+ * NO inversion needed (text is already dark on light).
  */
 
 export interface PreprocessOptions {
@@ -8,20 +18,26 @@ export interface PreprocessOptions {
   scale: number;
   /** Contrast multiplier (1.0 = no change, 2.0 = double contrast) */
   contrast: number;
-  /** Binarization threshold (0-255). Pixels above become white, below become black. */
+  /**
+   * Binarization threshold (0-255). Pixels darker than this become black,
+   * lighter become white. Set to 0 to skip binarization (grayscale mode).
+   */
   threshold: number;
-  /** Invert colors (useful when text is light on dark background, which is common in games) */
+  /** Invert colors. false for Marvel Rivals (dark text on light bg). */
   invert: boolean;
   /** Apply sharpening kernel */
   sharpen: boolean;
+  /** Normalize histogram (auto-levels) before other processing */
+  normalize: boolean;
 }
 
 export const DEFAULT_PREPROCESS: PreprocessOptions = {
   scale: 2,
-  contrast: 1.8,
-  threshold: 140,
-  invert: true,
+  contrast: 1.5,
+  threshold: 0,       // Skip binarization — normalized grayscale works better
+  invert: false,      // Text is already dark on light background
   sharpen: true,
+  normalize: true,
 };
 
 /**
@@ -82,23 +98,45 @@ export async function preprocessImage(
     data[i + 2] = gray;
   }
 
-  // Step 2: Apply contrast
-  const factor = (259 * (opts.contrast * 128 + 255)) / (255 * (259 - opts.contrast * 128));
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = clamp(factor * (data[i] - 128) + 128);
-    data[i + 1] = clamp(factor * (data[i + 1] - 128) + 128);
-    data[i + 2] = clamp(factor * (data[i + 2] - 128) + 128);
+  // Step 2: Normalize (auto-levels) — stretch histogram to full 0-255 range
+  if (opts.normalize) {
+    let min = 255, max = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] < min) min = data[i];
+      if (data[i] > max) max = data[i];
+    }
+    const range = max - min || 1;
+    for (let i = 0; i < data.length; i += 4) {
+      const normalized = ((data[i] - min) / range) * 255;
+      data[i] = normalized;
+      data[i + 1] = normalized;
+      data[i + 2] = normalized;
+    }
   }
 
-  // Step 3: Binarize (threshold)
-  for (let i = 0; i < data.length; i += 4) {
-    const val = data[i] > opts.threshold ? 255 : 0;
-    data[i] = val;
-    data[i + 1] = val;
-    data[i + 2] = val;
+  // Step 3: Apply contrast
+  if (opts.contrast !== 1.0) {
+    const factor =
+      (259 * (opts.contrast * 128 + 255)) /
+      (255 * (259 - opts.contrast * 128));
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = clamp(factor * (data[i] - 128) + 128);
+      data[i + 1] = clamp(factor * (data[i + 1] - 128) + 128);
+      data[i + 2] = clamp(factor * (data[i + 2] - 128) + 128);
+    }
   }
 
-  // Step 4: Invert if needed (Tesseract prefers dark text on light background)
+  // Step 4: Binarize (optional — skip if threshold is 0)
+  if (opts.threshold > 0) {
+    for (let i = 0; i < data.length; i += 4) {
+      const val = data[i] > opts.threshold ? 255 : 0;
+      data[i] = val;
+      data[i + 1] = val;
+      data[i + 2] = val;
+    }
+  }
+
+  // Step 5: Invert if needed
   if (opts.invert) {
     for (let i = 0; i < data.length; i += 4) {
       data[i] = 255 - data[i];
@@ -109,7 +147,7 @@ export async function preprocessImage(
 
   ctx.putImageData(imageData, 0, 0);
 
-  // Step 5: Sharpen (optional, applied via convolution)
+  // Step 6: Sharpen (optional, applied via convolution)
   if (opts.sharpen) {
     applyConvolution(ctx, w, h, [
       0, -1, 0,

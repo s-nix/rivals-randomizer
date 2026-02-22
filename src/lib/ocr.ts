@@ -19,6 +19,8 @@ export interface OcrLine {
 export interface OcrResult {
   /** Cleaned, filtered lines with confidence */
   lines: OcrLine[];
+  /** Raw unfiltered lines (for debugging) */
+  rawLines: OcrLine[];
   /** Raw Tesseract result for debugging */
   raw: RecognizeResult;
   /** The preprocessed image as a data URL (for debugging/preview) */
@@ -39,20 +41,33 @@ async function getWorker(
   return worker;
 }
 
-// ── Post-processing ──
+// ── Post-processing tuned for Marvel Rivals lobby screenshots ──
 
-/** Common UI text in Marvel Rivals that should be filtered out */
-const UI_NOISE = [
+/**
+ * Known UI text and rank names that appear in the lobby but are NOT player names.
+ * Matched case-insensitively. Includes partial matches via regex.
+ */
+const RANK_NAMES = [
+  "bronze", "silver", "gold", "platinum", "diamond",
+  "grandmaster", "celestial", "eternity", "one above all",
+  "unranked",
+];
+
+const UI_WORDS = [
   "team", "ready", "custom", "match", "lobby", "invite", "friends",
   "start", "cancel", "leave", "settings", "chat", "voice", "mute",
   "player", "players", "vs", "spectator", "spectators", "hero",
   "select", "ban", "pick", "map", "mode", "game", "queue",
   "back", "confirm", "accept", "decline", "close", "open",
-  "marvel", "rivals", "assemble", "season", "battle",
+  "marvel", "rivals", "assemble", "season", "battle", "competitive",
+  "quickplay", "practice", "overview", "social", "store",
 ];
 
-/** Characters commonly found in gamertags */
-const GAMERTAG_PATTERN = /^[a-zA-Z0-9_\-.\s#\[\](){}|]+$/;
+/** Rank pattern: rank name optionally followed by I/II/III/IV/V or a number */
+const RANK_PATTERN = new RegExp(
+  `^(${RANK_NAMES.join("|")})\\s*(i{1,3}|iv|v|vi{0,3}|\\d+)?$`,
+  "i"
+);
 
 /**
  * Filter and clean OCR lines to extract likely player names.
@@ -61,14 +76,7 @@ function postProcess(lines: OcrLine[]): OcrLine[] {
   return lines
     .map((line) => ({
       ...line,
-      // Clean up common OCR artifacts
-      text: line.text
-        .replace(/[|]/g, "l")         // | often misread for l
-        .replace(/[{}]/g, "")         // stray braces
-        .replace(/\s{2,}/g, " ")     // collapse multiple spaces
-        .replace(/^[\s._\-#]+/, "")  // strip leading junk
-        .replace(/[\s._\-#]+$/, "")  // strip trailing junk
-        .trim(),
+      text: cleanText(line.text),
     }))
     .filter((line) => {
       const text = line.text;
@@ -76,21 +84,39 @@ function postProcess(lines: OcrLine[]): OcrLine[] {
       // Too short or too long for a gamertag
       if (text.length < 2 || text.length > 30) return false;
 
-      // Pure numbers (likely UI elements like scores or timers)
-      if (/^\d+$/.test(text)) return false;
+      // Pure numbers (UI elements like "84", "100", stats)
+      if (/^\d+[\s\d]*$/.test(text)) return false;
 
-      // Single character
-      if (text.length === 1) return false;
+      // Known rank lines (GRANDMASTER III, SILVER I, etc.)
+      if (RANK_PATTERN.test(text)) return false;
 
-      // Known UI noise (exact match, case-insensitive)
-      if (UI_NOISE.includes(text.toLowerCase())) return false;
+      // UI noise words (exact match)
+      if (UI_WORDS.includes(text.toLowerCase())) return false;
 
-      // Lines that are mostly non-alphanumeric (likely UI artifacts)
+      // Mostly non-alphanumeric (UI artifacts, icons misread as punctuation)
       const alphaCount = (text.match(/[a-zA-Z0-9]/g) || []).length;
       if (alphaCount / text.length < 0.5) return false;
 
+      // Very low confidence lines are likely garbage
+      if (line.confidence < 30) return false;
+
       return true;
     });
+}
+
+/**
+ * Clean common OCR misreads from a text line.
+ */
+function cleanText(text: string): string {
+  return text
+    .replace(/[©®™@]+$/g, "")     // trailing misread icons (© from avatar icons)
+    .replace(/^[©®™@]+/g, "")     // leading misread icons
+    .replace(/[|]/g, "l")          // | often misread for l
+    .replace(/[{}[\]]/g, "")       // stray braces/brackets
+    .replace(/\s{2,}/g, " ")      // collapse multiple spaces
+    .replace(/^[\s._\-#:;]+/, "") // strip leading junk
+    .replace(/[\s._\-#:;]+$/, "") // strip trailing junk
+    .trim();
 }
 
 /**
@@ -119,11 +145,11 @@ export async function recognizeImage(
   // Step 3: Run Tesseract with tuned parameters
   const w = await getWorker(onProgress);
 
-  // Configure Tesseract for better gamertag recognition
+  // Configure Tesseract for Marvel Rivals lobby text
+  // Don't use char whitelist — gamertags can contain apostrophes, unicode, etc.
+  // Use SINGLE_BLOCK mode since the cropped region is a block of text lines
   await w.setParameters({
     tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
-    tessedit_char_whitelist:
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-. #[](){}|",
     preserve_interword_spaces: "1" as any,
   });
 
@@ -155,11 +181,12 @@ export async function recognizeImage(
     }
   }
 
-  // Step 5: Post-process
+  // Step 5: Post-process to extract player names
   const cleanedLines = postProcess(rawLines);
 
   return {
     lines: cleanedLines,
+    rawLines,
     raw: result,
     preprocessedPreview,
   };
@@ -175,14 +202,14 @@ export async function recognizeWithMultiPass(
   cropRect?: { x: number; y: number; width: number; height: number }
 ): Promise<OcrResult> {
   const presets: PreprocessOptions[] = [
-    // Default: high contrast, inverted (light text on dark bg)
+    // Default: dark text on light background (Marvel Rivals lobby)
     { ...DEFAULT_PREPROCESS },
-    // Lower threshold for lighter backgrounds
-    { ...DEFAULT_PREPROCESS, threshold: 100, invert: true },
-    // Higher threshold, no invert (dark text on light bg)
-    { ...DEFAULT_PREPROCESS, threshold: 180, invert: false },
-    // Extra contrast
-    { ...DEFAULT_PREPROCESS, contrast: 2.5, threshold: 120 },
+    // With binarization — threshold to isolate dark text
+    { ...DEFAULT_PREPROCESS, threshold: 140 },
+    // Higher contrast, no binarization
+    { ...DEFAULT_PREPROCESS, contrast: 2.0, normalize: true },
+    // Binarization with higher threshold for lighter text
+    { ...DEFAULT_PREPROCESS, threshold: 180, contrast: 1.2 },
   ];
 
   let bestResult: OcrResult | null = null;
