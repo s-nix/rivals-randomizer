@@ -30,11 +30,21 @@ export default function Home() {
   const [options, setOptions] = useState<RandomizerOptions>(DEFAULT_OPTIONS);
   const [result, setResult] = useState<RandomizerResult | null>(null);
 
+  // Fill in default names for empty slots
+  const withDefaults = useCallback(
+    (players: Player[]): Player[] =>
+      players.map((p, i) => ({
+        ...p,
+        name: p.name.trim() || `Player ${i + 1}`,
+      })),
+    []
+  );
+
   // ── Randomize ──
   const handleRandomize = useCallback(() => {
     const allPlayers = [
-      ...team1.filter((p) => p.name.trim()),
-      ...team2.filter((p) => p.name.trim()),
+      ...withDefaults(team1),
+      ...withDefaults(team2),
     ];
 
     if (allPlayers.length === 0) return;
@@ -42,17 +52,17 @@ export default function Home() {
     const randomResult = randomizeHeroes(allPlayers, options);
     setResult(randomResult);
     setStage("results");
-  }, [team1, team2, options]);
+  }, [team1, team2, options, withDefaults]);
 
   // ── Re-roll ──
   const handleReroll = useCallback(() => {
     const allPlayers = [
-      ...team1.filter((p) => p.name.trim()),
-      ...team2.filter((p) => p.name.trim()),
+      ...withDefaults(team1),
+      ...withDefaults(team2),
     ];
     const randomResult = randomizeHeroes(allPlayers, options);
     setResult(randomResult);
-  }, [team1, team2, options]);
+  }, [team1, team2, options, withDefaults]);
 
   // ── Start over ──
   const handleStartOver = useCallback(() => {
@@ -63,9 +73,7 @@ export default function Home() {
     setResult(null);
   }, []);
 
-  const filledPlayerCount =
-    team1.filter((p) => p.name.trim()).length +
-    team2.filter((p) => p.name.trim()).length;
+  const filledPlayerCount = team1.length + team2.length;
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
