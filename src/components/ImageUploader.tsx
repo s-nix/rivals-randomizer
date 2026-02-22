@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 
 interface ImageUploaderProps {
   onImageSelected: (file: File) => void;
@@ -23,6 +23,28 @@ export default function ImageUploader({
     },
     [onImageSelected]
   );
+
+  // ── Clipboard paste handler ──
+  useEffect(() => {
+    if (disabled) return;
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) handleFile(file);
+          return;
+        }
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [disabled, handleFile]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -82,8 +104,8 @@ export default function ImageUploader({
               />
             </svg>
             <p className="text-gray-400 text-center">
-              <span className="text-white font-medium">Click to upload</span> or
-              drag &amp; drop a lobby screenshot
+              <span className="text-white font-medium">Click to upload</span>,
+              drag &amp; drop, or <span className="text-white font-medium">paste</span> (Ctrl+V) a lobby screenshot
             </p>
             <p className="text-gray-500 text-sm">PNG, JPG, or WebP</p>
           </>
