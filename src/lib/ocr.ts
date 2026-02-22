@@ -23,7 +23,7 @@ export interface OcrResult {
   rawLines: OcrLine[];
   /** Raw Tesseract result for debugging */
   raw: RecognizeResult;
-  /** The preprocessed image as a data URL (for debugging/preview) */
+  /** The input image Tesseract saw (for debugging/preview) — may be null for raw mode */
   preprocessedPreview: string;
 }
 
@@ -45,7 +45,6 @@ async function getWorker(
 
 /**
  * Known UI text and rank names that appear in the lobby but are NOT player names.
- * Matched case-insensitively. Includes partial matches via regex.
  */
 const RANK_NAMES = [
   "bronze", "silver", "gold", "platinum", "diamond",
@@ -63,9 +62,12 @@ const UI_WORDS = [
   "quickplay", "practice", "overview", "social", "store",
 ];
 
-/** Rank pattern: rank name optionally followed by I/II/III/IV/V or a number */
+/**
+ * Rank pattern: rank name optionally followed by roman numerals or numbers.
+ * Handles OCR misreads: I↔l↔1, II↔Il↔ll↔11, etc.
+ */
 const RANK_PATTERN = new RegExp(
-  `^(${RANK_NAMES.join("|")})\\s*(i{1,3}|iv|v|vi{0,3}|\\d+)?$`,
+  `^(${RANK_NAMES.join("|")})\\s*([iIl1]{1,4}|iv|v|vi{0,3}|\\d{1,2})?$`,
   "i"
 );
 
@@ -84,21 +86,24 @@ function postProcess(lines: OcrLine[]): OcrLine[] {
       // Too short or too long for a gamertag
       if (text.length < 2 || text.length > 30) return false;
 
-      // Pure numbers (UI elements like "84", "100", stats)
-      if (/^\d+[\s\d]*$/.test(text)) return false;
+      // Pure numbers / single chars (UI elements like "84", "100", stats)
+      if (/^\d[\s\d.,]*$/.test(text)) return false;
 
       // Known rank lines (GRANDMASTER III, SILVER I, etc.)
       if (RANK_PATTERN.test(text)) return false;
 
-      // UI noise words (exact match)
+      // UI noise words (exact match, case-insensitive)
       if (UI_WORDS.includes(text.toLowerCase())) return false;
+
+      // Very short text that's a common OCR artifact (single letters, punctuation)
+      if (text.length <= 2 && !/[a-zA-Z]{2}/.test(text)) return false;
 
       // Mostly non-alphanumeric (UI artifacts, icons misread as punctuation)
       const alphaCount = (text.match(/[a-zA-Z0-9]/g) || []).length;
-      if (alphaCount / text.length < 0.5) return false;
+      if (alphaCount / text.length < 0.4) return false;
 
       // Very low confidence lines are likely garbage
-      if (line.confidence < 30) return false;
+      if (line.confidence < 25) return false;
 
       return true;
     });
@@ -109,23 +114,142 @@ function postProcess(lines: OcrLine[]): OcrLine[] {
  */
 function cleanText(text: string): string {
   return text
-    .replace(/[©®™@]+$/g, "")     // trailing misread icons (© from avatar icons)
-    .replace(/^[©®™@]+/g, "")     // leading misread icons
-    .replace(/[|]/g, "l")          // | often misread for l
+    .replace(/[©®™]+/g, "")       // misread icons (© from avatar icons)
+    .replace(/^[@#]+\s*/, "")      // leading @ or # from icon misreads
+    .replace(/\s*[@#]+$/, "")      // trailing @ or #
     .replace(/[{}[\]]/g, "")       // stray braces/brackets
     .replace(/\s{2,}/g, " ")      // collapse multiple spaces
-    .replace(/^[\s._\-#:;]+/, "") // strip leading junk
-    .replace(/[\s._\-#:;]+$/, "") // strip trailing junk
+    .replace(/^[\s._\-:;]+/, "")  // strip leading junk (keep # for gamertags)
+    .replace(/[\s._\-:;]+$/, "")  // strip trailing junk
     .trim();
 }
 
 /**
- * Run OCR on an image with preprocessing and post-processing.
+ * Extract OcrLine array from a Tesseract RecognizeResult,
+ * walking the blocks→paragraphs→lines hierarchy.
+ */
+function extractLines(result: RecognizeResult): OcrLine[] {
+  const lines: OcrLine[] = [];
+
+  if (result.data.blocks) {
+    for (const block of result.data.blocks) {
+      for (const paragraph of block.paragraphs) {
+        for (const line of paragraph.lines) {
+          const text = line.text.trim();
+          if (text.length > 0) {
+            lines.push({ text, confidence: line.confidence });
+          }
+        }
+      }
+    }
+  }
+
+  // Fallback: split raw text by newlines
+  if (lines.length === 0 && result.data.text) {
+    for (const text of result.data.text.split("\n")) {
+      const trimmed = text.trim();
+      if (trimmed.length > 0) {
+        lines.push({ text: trimmed, confidence: result.data.confidence });
+      }
+    }
+  }
+
+  return lines;
+}
+
+// ── Main OCR functions ──
+
+/**
+ * Run OCR directly on the raw image with Tesseract's built-in rectangle
+ * cropping. No canvas preprocessing — avoids degrading the image.
  *
- * @param image - Source image
- * @param onProgress - Progress callback
- * @param cropRect - Optional crop region (natural image coordinates)
- * @param preprocessOpts - Image preprocessing options
+ * This is the preferred first-pass approach since Tesseract handles the
+ * original screenshot quality better than our canvas preprocessing.
+ */
+export async function recognizeRaw(
+  image: File | Blob | string,
+  onProgress?: (p: OcrProgress) => void,
+  cropRect?: { x: number; y: number; width: number; height: number }
+): Promise<OcrResult> {
+  onProgress?.({ status: "Preparing OCR...", progress: 0.05 });
+  const w = await getWorker(onProgress);
+
+  await w.setParameters({
+    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+    preserve_interword_spaces: "1" as any,
+  });
+
+  onProgress?.({ status: "Reading text...", progress: 0.2 });
+
+  // Use Tesseract's built-in rectangle cropping (no canvas needed)
+  const recognizeOpts = cropRect
+    ? {
+        rectangle: {
+          top: Math.round(cropRect.y),
+          left: Math.round(cropRect.x),
+          width: Math.round(cropRect.width),
+          height: Math.round(cropRect.height),
+        },
+      }
+    : undefined;
+
+  const result = await w.recognize(image, recognizeOpts);
+  const rawLines = extractLines(result);
+  const cleanedLines = postProcess(rawLines);
+
+  // Generate a preview of what was processed (the crop region, if any)
+  let preprocessedPreview = "";
+  try {
+    preprocessedPreview = await generateCropPreview(image, cropRect);
+  } catch {
+    // Preview is optional — don't fail OCR over it
+  }
+
+  return {
+    lines: cleanedLines,
+    rawLines,
+    raw: result,
+    preprocessedPreview,
+  };
+}
+
+/**
+ * Generate a small preview image of the crop region (for debugging UI).
+ */
+async function generateCropPreview(
+  source: File | Blob | string,
+  cropRect?: { x: number; y: number; width: number; height: number }
+): Promise<string> {
+  const img = await loadImageElement(source);
+  const sx = cropRect?.x ?? 0;
+  const sy = cropRect?.y ?? 0;
+  const sw = cropRect?.width ?? img.naturalWidth;
+  const sh = cropRect?.height ?? img.naturalHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = sw;
+  canvas.height = sh;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  return canvas.toDataURL("image/png");
+}
+
+function loadImageElement(src: File | Blob | string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    if (typeof src === "string") {
+      img.src = src;
+    } else {
+      img.src = URL.createObjectURL(src);
+    }
+  });
+}
+
+/**
+ * Run OCR with canvas preprocessing (scale, grayscale, contrast, etc.).
+ * Use this as a fallback when raw OCR doesn't produce good results.
  */
 export async function recognizeImage(
   image: File | Blob | string,
@@ -133,21 +257,14 @@ export async function recognizeImage(
   cropRect?: { x: number; y: number; width: number; height: number },
   preprocessOpts: PreprocessOptions = DEFAULT_PREPROCESS
 ): Promise<OcrResult> {
-  // Step 1: Preprocess image
   onProgress?.({ status: "Preprocessing image...", progress: 0.05 });
   const canvas = await preprocessImage(image, preprocessOpts, cropRect);
   const preprocessedPreview = canvas.toDataURL("image/png");
 
-  // Step 2: Convert to blob for Tesseract
   onProgress?.({ status: "Preparing for OCR...", progress: 0.1 });
   const blob = await canvasToBlob(canvas);
 
-  // Step 3: Run Tesseract with tuned parameters
   const w = await getWorker(onProgress);
-
-  // Configure Tesseract for Marvel Rivals lobby text
-  // Don't use char whitelist — gamertags can contain apostrophes, unicode, etc.
-  // Use SINGLE_BLOCK mode since the cropped region is a block of text lines
   await w.setParameters({
     tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
     preserve_interword_spaces: "1" as any,
@@ -156,32 +273,7 @@ export async function recognizeImage(
   onProgress?.({ status: "Running OCR...", progress: 0.2 });
   const result = await w.recognize(blob);
 
-  // Step 4: Extract lines with confidence from block/paragraph/line hierarchy
-  const rawLines: OcrLine[] = [];
-
-  if (result.data.blocks) {
-    for (const block of result.data.blocks) {
-      for (const paragraph of block.paragraphs) {
-        for (const line of paragraph.lines) {
-          const text = line.text.trim();
-          if (text.length > 0) {
-            rawLines.push({ text, confidence: line.confidence });
-          }
-        }
-      }
-    }
-  } else {
-    // Fallback: split raw text by newlines
-    const textLines = result.data.text.split("\n");
-    for (const text of textLines) {
-      const trimmed = text.trim();
-      if (trimmed.length > 0) {
-        rawLines.push({ text: trimmed, confidence: result.data.confidence });
-      }
-    }
-  }
-
-  // Step 5: Post-process to extract player names
+  const rawLines = extractLines(result);
   const cleanedLines = postProcess(rawLines);
 
   return {
@@ -193,49 +285,78 @@ export async function recognizeImage(
 }
 
 /**
- * Run multiple OCR passes with different preprocessing settings
- * and merge the best results. Use this when single-pass results are poor.
+ * Run multiple OCR passes and pick the best result.
+ * Starts with raw (no preprocessing), then tries increasing preprocessing.
  */
 export async function recognizeWithMultiPass(
   image: File | Blob | string,
   onProgress?: (p: OcrProgress) => void,
   cropRect?: { x: number; y: number; width: number; height: number }
 ): Promise<OcrResult> {
-  const presets: PreprocessOptions[] = [
-    // Default: dark text on light background (Marvel Rivals lobby)
-    { ...DEFAULT_PREPROCESS },
-    // With binarization — threshold to isolate dark text
-    { ...DEFAULT_PREPROCESS, threshold: 140 },
-    // Higher contrast, no binarization
-    { ...DEFAULT_PREPROCESS, contrast: 2.0, normalize: true },
-    // Binarization with higher threshold for lighter text
-    { ...DEFAULT_PREPROCESS, threshold: 180, contrast: 1.2 },
+  const passes: Array<{
+    label: string;
+    fn: () => Promise<OcrResult>;
+  }> = [
+    {
+      label: "Raw (no preprocessing)",
+      fn: () => recognizeRaw(image, undefined, cropRect),
+    },
+    {
+      label: "Scale 2x + grayscale",
+      fn: () =>
+        recognizeImage(image, undefined, cropRect, {
+          ...DEFAULT_PREPROCESS,
+          scale: 2,
+        }),
+    },
+    {
+      label: "Scale 2x + normalize",
+      fn: () =>
+        recognizeImage(image, undefined, cropRect, {
+          ...DEFAULT_PREPROCESS,
+          scale: 2,
+          normalize: true,
+        }),
+    },
+    {
+      label: "Scale 2x + contrast 1.3",
+      fn: () =>
+        recognizeImage(image, undefined, cropRect, {
+          ...DEFAULT_PREPROCESS,
+          scale: 2,
+          contrast: 1.3,
+          normalize: true,
+        }),
+    },
   ];
 
   let bestResult: OcrResult | null = null;
   let bestScore = -1;
 
-  for (let i = 0; i < presets.length; i++) {
+  for (let i = 0; i < passes.length; i++) {
     onProgress?.({
-      status: `OCR pass ${i + 1}/${presets.length}...`,
-      progress: (i / presets.length) * 0.8,
+      status: `Pass ${i + 1}/${passes.length}: ${passes[i].label}...`,
+      progress: (i / passes.length) * 0.9,
     });
 
-    const result = await recognizeImage(image, undefined, cropRect, presets[i]);
+    try {
+      const result = await passes[i].fn();
 
-    // Score based on total confidence and number of valid lines
-    const score =
-      result.lines.reduce((sum, l) => sum + l.confidence, 0) +
-      result.lines.length * 10;
+      // Score: prefer more high-confidence lines
+      const score =
+        result.lines.reduce((sum, l) => sum + l.confidence, 0) +
+        result.lines.length * 20;
 
-    if (score > bestScore) {
-      bestScore = score;
-      bestResult = result;
+      if (score > bestScore) {
+        bestScore = score;
+        bestResult = result;
+      }
+    } catch {
+      // Skip failed passes
     }
   }
 
   onProgress?.({ status: "Done", progress: 1 });
-
   return bestResult!;
 }
 

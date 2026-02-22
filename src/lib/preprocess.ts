@@ -33,11 +33,11 @@ export interface PreprocessOptions {
 
 export const DEFAULT_PREPROCESS: PreprocessOptions = {
   scale: 2,
-  contrast: 1.5,
-  threshold: 0,       // Skip binarization — normalized grayscale works better
+  contrast: 1.0,      // 1.0 = no change — let Tesseract handle the original
+  threshold: 0,       // Skip binarization
   invert: false,      // Text is already dark on light background
-  sharpen: true,
-  normalize: true,
+  sharpen: false,     // Sharpening can create artifacts that confuse OCR
+  normalize: false,   // Normalization not needed when already legible
 };
 
 /**
@@ -114,15 +114,12 @@ export async function preprocessImage(
     }
   }
 
-  // Step 3: Apply contrast
+  // Step 3: Apply contrast (linear: 1.0 = no change, 1.5 = 50% more)
   if (opts.contrast !== 1.0) {
-    const factor =
-      (259 * (opts.contrast * 128 + 255)) /
-      (255 * (259 - opts.contrast * 128));
     for (let i = 0; i < data.length; i += 4) {
-      data[i] = clamp(factor * (data[i] - 128) + 128);
-      data[i + 1] = clamp(factor * (data[i + 1] - 128) + 128);
-      data[i + 2] = clamp(factor * (data[i + 2] - 128) + 128);
+      data[i] = clamp((data[i] - 128) * opts.contrast + 128);
+      data[i + 1] = clamp((data[i + 1] - 128) * opts.contrast + 128);
+      data[i + 2] = clamp((data[i + 2] - 128) * opts.contrast + 128);
     }
   }
 

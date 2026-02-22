@@ -15,7 +15,7 @@ import {
   randomizeHeroes,
 } from "@/lib/randomizer";
 import {
-  recognizeImage,
+  recognizeRaw,
   recognizeWithMultiPass,
   OcrProgress,
   OcrLine,
@@ -44,6 +44,7 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [useMultiPass, setUseMultiPass] = useState(false);
   const [preprocessedPreview, setPreprocessedPreview] = useState<string>("");
+  const [rawOcrLines, setRawOcrLines] = useState<OcrLine[]>([]);
   const [showDebug, setShowDebug] = useState(false);
 
   // ── Step 1: Image selected → go to crop stage ──
@@ -63,7 +64,7 @@ export default function Home() {
       setOcrProgress(0);
 
       try {
-        const ocrFn = useMultiPass ? recognizeWithMultiPass : recognizeImage;
+        const ocrFn = useMultiPass ? recognizeWithMultiPass : recognizeRaw;
         const ocrResult = await ocrFn(
           imageFile,
           (p: OcrProgress) => {
@@ -74,6 +75,7 @@ export default function Home() {
         );
 
         setPreprocessedPreview(ocrResult.preprocessedPreview);
+        setRawOcrLines(ocrResult.rawLines);
 
         // Split lines into two teams
         const names: OcrLine[] = ocrResult.lines.filter(
@@ -153,6 +155,7 @@ export default function Home() {
     setOcrStatus("");
     setOcrProgress(0);
     setPreprocessedPreview("");
+    setRawOcrLines([]);
   }, []);
 
   const filledPlayerCount =
@@ -227,8 +230,9 @@ export default function Home() {
             <div className="text-center space-y-2">
               <h2 className="text-2xl font-bold">Select Player Names</h2>
               <p className="text-gray-400">
-                Draw a box around the area containing player names to improve
-                OCR accuracy. Or use the full image.
+                Draw a box around <strong>one team&apos;s player names</strong> to
+                improve OCR accuracy. Crop just the names — avoid avatars,
+                ranks, and other UI.
               </p>
             </div>
 
@@ -280,8 +284,8 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Debug: preprocessed image preview */}
-            {preprocessedPreview && (
+            {/* Debug: raw OCR lines + preprocessed image preview */}
+            {(rawOcrLines.length > 0 || preprocessedPreview) && (
               <div className="space-y-2">
                 <button
                   onClick={() => setShowDebug(!showDebug)}
@@ -297,18 +301,32 @@ export default function Home() {
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
-                  {showDebug ? "Hide" : "Show"} preprocessed image
+                  {showDebug ? "Hide" : "Show"} OCR debug info
                 </button>
                 {showDebug && (
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-3">
-                    <p className="text-xs text-gray-500 mb-2">
-                      This is what Tesseract sees after preprocessing:
-                    </p>
-                    <img
-                      src={preprocessedPreview}
-                      alt="Preprocessed"
-                      className="max-h-[200px] mx-auto rounded border border-gray-700"
-                    />
+                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-3 space-y-3">
+                    {rawOcrLines.length > 0 && (
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1 font-semibold">Raw OCR lines (before filtering):</p>
+                        <div className="text-xs font-mono space-y-0.5 max-h-[150px] overflow-y-auto">
+                          {rawOcrLines.map((line, i) => (
+                            <div key={i} className={`${line.confidence < 50 ? "text-red-400" : "text-gray-400"}`}>
+                              [{Math.round(line.confidence)}%] {line.text}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {preprocessedPreview && (
+                      <div>
+                        <p className="text-xs text-gray-500 mb-2">Cropped region sent to OCR:</p>
+                        <img
+                          src={preprocessedPreview}
+                          alt="OCR input"
+                          className="max-h-[200px] mx-auto rounded border border-gray-700"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
