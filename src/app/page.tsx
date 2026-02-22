@@ -1,65 +1,269 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useCallback } from "react";
+import { v4 as uuid } from "uuid";
+import ImageUploader from "@/components/ImageUploader";
+import PlayerList from "@/components/PlayerList";
+import ConstraintPanel from "@/components/ConstraintPanel";
+import ResultsDisplay from "@/components/ResultsDisplay";
+import {
+  Player,
+  RandomizerOptions,
+  RandomizerResult,
+  DEFAULT_OPTIONS,
+  randomizeHeroes,
+} from "@/lib/randomizer";
+import { recognizeImage, OcrProgress } from "@/lib/ocr";
+
+type Stage = "upload" | "edit" | "results";
+
+function createEmptyTeam(team: 1 | 2, count: number = 6): Player[] {
+  return Array.from({ length: count }, () => ({
+    id: uuid(),
+    name: "",
+    team,
+  }));
+}
 
 export default function Home() {
+  const [stage, setStage] = useState<Stage>("upload");
+  const [team1, setTeam1] = useState<Player[]>(createEmptyTeam(1));
+  const [team2, setTeam2] = useState<Player[]>(createEmptyTeam(2));
+  const [options, setOptions] = useState<RandomizerOptions>(DEFAULT_OPTIONS);
+  const [result, setResult] = useState<RandomizerResult | null>(null);
+  const [ocrStatus, setOcrStatus] = useState<string>("");
+  const [ocrProgress, setOcrProgress] = useState<number>(0);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // ── OCR handler ──
+  const handleImageSelected = useCallback(async (file: File) => {
+    setIsProcessing(true);
+    setOcrStatus("Initializing OCR...");
+    setOcrProgress(0);
+
+    try {
+      const ocrResult = await recognizeImage(file, (p: OcrProgress) => {
+        setOcrStatus(p.status);
+        setOcrProgress(Math.round(p.progress * 100));
+      });
+
+      // Try to split OCR lines into two teams (assume first half = team 1, second = team 2)
+      const names = ocrResult.lines.filter((l) => l.length > 1);
+      const mid = Math.ceil(names.length / 2);
+
+      const t1: Player[] = names.slice(0, mid).map((name) => ({
+        id: uuid(),
+        name,
+        team: 1 as const,
+      }));
+
+      const t2: Player[] = names.slice(mid).map((name) => ({
+        id: uuid(),
+        name,
+        team: 2 as const,
+      }));
+
+      // Pad to at least 1 entry each
+      if (t1.length === 0) t1.push({ id: uuid(), name: "", team: 1 });
+      if (t2.length === 0) t2.push({ id: uuid(), name: "", team: 2 });
+
+      setTeam1(t1);
+      setTeam2(t2);
+      setStage("edit");
+    } catch (err) {
+      console.error("OCR failed:", err);
+      setOcrStatus("OCR failed. Try manual entry instead.");
+    } finally {
+      setIsProcessing(false);
+    }
+  }, []);
+
+  // ── Manual entry ──
+  const handleManualEntry = useCallback(() => {
+    setTeam1(createEmptyTeam(1));
+    setTeam2(createEmptyTeam(2));
+    setStage("edit");
+  }, []);
+
+  // ── Randomize ──
+  const handleRandomize = useCallback(() => {
+    const allPlayers = [
+      ...team1.filter((p) => p.name.trim()),
+      ...team2.filter((p) => p.name.trim()),
+    ];
+
+    if (allPlayers.length === 0) return;
+
+    const randomResult = randomizeHeroes(allPlayers, options);
+    setResult(randomResult);
+    setStage("results");
+  }, [team1, team2, options]);
+
+  // ── Re-roll ──
+  const handleReroll = useCallback(() => {
+    const allPlayers = [
+      ...team1.filter((p) => p.name.trim()),
+      ...team2.filter((p) => p.name.trim()),
+    ];
+    const randomResult = randomizeHeroes(allPlayers, options);
+    setResult(randomResult);
+  }, [team1, team2, options]);
+
+  // ── Start over ──
+  const handleStartOver = useCallback(() => {
+    setStage("upload");
+    setTeam1(createEmptyTeam(1));
+    setTeam2(createEmptyTeam(2));
+    setOptions(DEFAULT_OPTIONS);
+    setResult(null);
+    setOcrStatus("");
+    setOcrProgress(0);
+  }, []);
+
+  const filledPlayerCount =
+    team1.filter((p) => p.name.trim()).length +
+    team2.filter((p) => p.name.trim()).length;
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <div className="min-h-screen bg-gray-950 text-white">
+      {/* Header */}
+      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10">
+        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-red-500 flex items-center justify-center text-sm font-bold">
+              R
+            </div>
+            <h1 className="text-xl font-bold">
+              Rivals <span className="text-purple-400">Randomizer</span>
+            </h1>
+          </div>
+          {stage !== "upload" && (
+            <button
+              onClick={handleStartOver}
+              className="text-sm text-gray-500 hover:text-white transition-colors"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              Start over
+            </button>
+          )}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+      </header>
+
+      <main className="max-w-4xl mx-auto px-4 py-8">
+        {/* ── Stage: Upload ── */}
+        {stage === "upload" && (
+          <div className="space-y-6">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold">
+                Upload a lobby screenshot
+              </h2>
+              <p className="text-gray-400">
+                Upload a screenshot of your Marvel Rivals custom match lobby to
+                extract player names, or enter them manually.
+              </p>
+            </div>
+
+            <ImageUploader
+              onImageSelected={handleImageSelected}
+              disabled={isProcessing}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+
+            {isProcessing && (
+              <div className="text-center space-y-2">
+                <div className="w-full bg-gray-800 rounded-full h-2">
+                  <div
+                    className="bg-purple-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${ocrProgress}%` }}
+                  />
+                </div>
+                <p className="text-sm text-gray-400">{ocrStatus}</p>
+              </div>
+            )}
+
+            <div className="relative flex items-center justify-center">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-800" />
+              </div>
+              <span className="relative bg-gray-950 px-4 text-sm text-gray-500">
+                or
+              </span>
+            </div>
+
+            <button
+              onClick={handleManualEntry}
+              className="w-full py-3 border border-gray-700 rounded-xl text-gray-300
+                         hover:border-gray-500 hover:text-white transition-colors"
+            >
+              Enter players manually
+            </button>
+          </div>
+        )}
+
+        {/* ── Stage: Edit Players ── */}
+        {stage === "edit" && (
+          <div className="space-y-6">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold">Edit Players</h2>
+              <p className="text-gray-400">
+                Review and edit player names for each team. Add or remove
+                players as needed.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-6">
+              <PlayerList
+                teamNumber={1}
+                players={team1}
+                onPlayersChange={setTeam1}
+              />
+              <PlayerList
+                teamNumber={2}
+                players={team2}
+                onPlayersChange={setTeam2}
+              />
+            </div>
+
+            <ConstraintPanel options={options} onOptionsChange={setOptions} />
+
+            <button
+              onClick={handleRandomize}
+              disabled={filledPlayerCount === 0}
+              className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-red-600
+                         hover:from-purple-500 hover:to-red-500
+                         disabled:opacity-40 disabled:cursor-not-allowed
+                         text-white font-bold rounded-xl transition-all text-lg
+                         shadow-lg shadow-purple-500/20"
+            >
+              🎲 Randomize Heroes ({filledPlayerCount} player
+              {filledPlayerCount !== 1 ? "s" : ""})
+            </button>
+          </div>
+        )}
+
+        {/* ── Stage: Results ── */}
+        {stage === "results" && result && (
+          <div className="space-y-6">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold">Hero Assignments</h2>
+              <p className="text-gray-400">
+                Here are the randomized hero assignments for your custom match.
+              </p>
+            </div>
+
+            <ResultsDisplay
+              result={result}
+              onReroll={handleReroll}
+              onStartOver={handleStartOver}
+            />
+          </div>
+        )}
       </main>
+
+      {/* Footer */}
+      <footer className="border-t border-gray-800 mt-12">
+        <div className="max-w-4xl mx-auto px-4 py-6 text-center text-gray-600 text-sm">
+          Marvel Rivals Randomizer — {new Date().getFullYear()}
+        </div>
+      </footer>
     </div>
   );
 }
