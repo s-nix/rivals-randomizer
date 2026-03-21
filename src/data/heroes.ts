@@ -73,6 +73,7 @@ export const heroes: Hero[] = [
   { id: "invisible-woman", name: "Invisible Woman",  role: "Strategist" },
   { id: "ultron",          name: "Ultron",           role: "Strategist" },
   { id: "gambit",          name: "Gambit",           role: "Strategist" },
+  { id: "white-fox",       name: "White Fox",        role: "Strategist" },
 
   // ──────────────────── MULTI-ROLE (1) ────────────────────
   { id: "deadpool", name: "Deadpool", role: ["Vanguard", "Duelist", "Strategist"] },
