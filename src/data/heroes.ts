@@ -22,7 +22,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 };
 
 export const heroes: Hero[] = [
-  // ──────────────────── VANGUARDS (12) ────────────────────
+  // ──────────────────── VANGUARDS (13) ────────────────────
   { id: "bruce-banner",    name: "Bruce Banner",     role: "Vanguard" },
   { id: "captain-america", name: "Captain America",  role: "Vanguard" },
   { id: "doctor-strange",  name: "Doctor Strange",   role: "Vanguard" },
@@ -35,8 +35,9 @@ export const heroes: Hero[] = [
   { id: "emma-frost",      name: "Emma Frost",       role: "Vanguard" },
   { id: "angela",          name: "Angela",           role: "Vanguard" },
   { id: "rogue",           name: "Rogue",            role: "Vanguard" },
+  { id: "devil-dino",      name: "Devil Dino",       role: "Vanguard" },
 
-  // ──────────────────── DUELISTS (24) ─────────────────────
+  // ──────────────────── DUELISTS (25) ─────────────────────
   { id: "black-panther",   name: "Black Panther",    role: "Duelist" },
   { id: "black-widow",     name: "Black Widow",      role: "Duelist" },
   { id: "hawkeye",         name: "Hawkeye",          role: "Duelist" },
@@ -61,6 +62,7 @@ export const heroes: Hero[] = [
   { id: "blade",           name: "Blade",            role: "Duelist" },
   { id: "daredevil",       name: "Daredevil",        role: "Duelist" },
   { id: "elsa-bloodstone", name: "Elsa Bloodstone",  role: "Duelist" },
+  { id: "cyclops",         name: "Cyclops",          role: "Duelist" },
 
   // ──────────────────── STRATEGISTS (10) ──────────────────
   { id: "adam-warlock",     name: "Adam Warlock",     role: "Strategist" },
