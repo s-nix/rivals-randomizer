@@ -37,7 +37,7 @@ export const heroes: Hero[] = [
   { id: "rogue",           name: "Rogue",            role: "Vanguard" },
   { id: "devil-dino",      name: "Devil Dino",       role: "Vanguard" },
 
-  // ──────────────────── DUELISTS (25) ─────────────────────
+  // ──────────────────── DUELISTS (26) ─────────────────────
   { id: "black-panther",   name: "Black Panther",    role: "Duelist" },
   { id: "black-widow",     name: "Black Widow",      role: "Duelist" },
   { id: "hawkeye",         name: "Hawkeye",          role: "Duelist" },
@@ -63,8 +63,9 @@ export const heroes: Hero[] = [
   { id: "daredevil",       name: "Daredevil",        role: "Duelist" },
   { id: "elsa-bloodstone", name: "Elsa Bloodstone",  role: "Duelist" },
   { id: "cyclops",         name: "Cyclops",          role: "Duelist" },
+  { id: "jubilee",         name: "Jubilee",          role: "Duelist" },
 
-  // ──────────────────── STRATEGISTS (10) ──────────────────
+  // ──────────────────── STRATEGISTS (11) ──────────────────
   { id: "adam-warlock",     name: "Adam Warlock",     role: "Strategist" },
   { id: "cloak-dagger",    name: "Cloak & Dagger",   role: "Strategist" },
   { id: "jeff",            name: "Jeff the Land Shark", role: "Strategist" },
