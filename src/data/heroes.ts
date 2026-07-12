@@ -64,7 +64,7 @@ export const heroes: Hero[] = [
   { id: "elsa-bloodstone", name: "Elsa Bloodstone",  role: "Duelist" },
   { id: "cyclops",         name: "Cyclops",          role: "Duelist" },
 
-  // ──────────────────── STRATEGISTS (10) ──────────────────
+  // ──────────────────── STRATEGISTS (12) ──────────────────
   { id: "adam-warlock",     name: "Adam Warlock",     role: "Strategist" },
   { id: "cloak-dagger",    name: "Cloak & Dagger",   role: "Strategist" },
   { id: "jeff",            name: "Jeff the Land Shark", role: "Strategist" },
@@ -76,6 +76,7 @@ export const heroes: Hero[] = [
   { id: "ultron",          name: "Ultron",           role: "Strategist" },
   { id: "gambit",          name: "Gambit",           role: "Strategist" },
   { id: "white-fox",       name: "White Fox",        role: "Strategist" },
+  { id: "jubilee",         name: "Jubilee",          role: "Strategist" },
 
   // ──────────────────── MULTI-ROLE (1) ────────────────────
   { id: "deadpool", name: "Deadpool", role: ["Vanguard", "Duelist", "Strategist"] },
