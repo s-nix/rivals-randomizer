@@ -1,4 +1,4 @@
-// Marvel Rivals Hero Roster — as of February 2026 (Season 6.5)
+// Marvel Rivals Hero Roster — as of November 2026 (Season 11)
 // To add new heroes, simply append to the `heroes` array below.
 
 export type Role = "Vanguard" | "Duelist" | "Strategist";
@@ -22,7 +22,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 };
 
 export const heroes: Hero[] = [
-  // ──────────────────── VANGUARDS (13) ────────────────────
+  // ──────────────────── VANGUARDS (14) ────────────────────
   { id: "bruce-banner",    name: "Bruce Banner",     role: "Vanguard" },
   { id: "captain-america", name: "Captain America",  role: "Vanguard" },
   { id: "doctor-strange",  name: "Doctor Strange",   role: "Vanguard" },
@@ -36,8 +36,9 @@ export const heroes: Hero[] = [
   { id: "angela",          name: "Angela",           role: "Vanguard" },
   { id: "rogue",           name: "Rogue",            role: "Vanguard" },
   { id: "devil-dino",      name: "Devil Dino",       role: "Vanguard" },
+  { id: "the-hood",        name: "The Hood",         role: "Vanguard" },
 
-  // ──────────────────── DUELISTS (25) ─────────────────────
+  // ──────────────────── DUELISTS (27) ─────────────────────
   { id: "black-panther",   name: "Black Panther",    role: "Duelist" },
   { id: "black-widow",     name: "Black Widow",      role: "Duelist" },
   { id: "hawkeye",         name: "Hawkeye",          role: "Duelist" },
@@ -63,8 +64,10 @@ export const heroes: Hero[] = [
   { id: "daredevil",       name: "Daredevil",        role: "Duelist" },
   { id: "elsa-bloodstone", name: "Elsa Bloodstone",  role: "Duelist" },
   { id: "cyclops",         name: "Cyclops",          role: "Duelist" },
+  { id: "black-cat",       name: "Black Cat",        role: "Duelist" },
+  { id: "gorr",            name: "Gorr",             role: "Duelist" },
 
-  // ──────────────────── STRATEGISTS (12) ──────────────────
+  // ──────────────────── STRATEGISTS (13) ──────────────────
   { id: "adam-warlock",     name: "Adam Warlock",     role: "Strategist" },
   { id: "cloak-dagger",    name: "Cloak & Dagger",   role: "Strategist" },
   { id: "jeff",            name: "Jeff the Land Shark", role: "Strategist" },
@@ -77,6 +80,7 @@ export const heroes: Hero[] = [
   { id: "gambit",          name: "Gambit",           role: "Strategist" },
   { id: "white-fox",       name: "White Fox",        role: "Strategist" },
   { id: "jubilee",         name: "Jubilee",          role: "Strategist" },
+  { id: "nightcrawler",    name: "Nightcrawler",     role: "Strategist" },
 
   // ──────────────────── MULTI-ROLE (1) ────────────────────
   { id: "deadpool", name: "Deadpool", role: ["Vanguard", "Duelist", "Strategist"] },
